@@ -48,8 +48,6 @@ html,body{
     padding:12px;
 }
 
-/* USERNAME ITEM */
-
 .user-item{
     width:100%;
     background:white;
@@ -78,7 +76,16 @@ html,body{
     color:#777;
 }
 
-/* MESSAGE */
+.status{
+    font-size:12px;
+    font-weight:bold;
+    margin-left:auto;
+    margin-right:12px;
+}
+
+.status.approved{
+    color:#159447;
+}
 
 .message{
     background:white;
@@ -116,6 +123,45 @@ html,body{
     margin-top:3px;
 }
 
+.approval-status{
+    margin:10px 0;
+    padding:11px;
+    border-radius:8px;
+    text-align:center;
+    font-size:15px;
+    font-weight:bold;
+}
+
+.pending{
+    background:#fff3cd;
+    color:#856404;
+}
+
+.approved{
+    background:#d4edda;
+    color:#155724;
+}
+
+.approve-btn{
+    width:100%;
+    height:48px;
+    border:0;
+    border-radius:8px;
+    background:#159447;
+    color:white;
+    font-size:17px;
+    font-weight:bold;
+    margin-bottom:12px;
+}
+
+.approve-btn:active{
+    transform:scale(.98);
+}
+
+.approve-btn:disabled{
+    background:#aaa;
+}
+
 .song{
     border-top:1px solid #eee;
     padding:12px 0;
@@ -147,17 +193,6 @@ html,body{
     color:#888;
     font-size:16px;
 }
-
-/* NEW INDICATOR */
-
-.new-dot{
-    width:10px;
-    height:10px;
-    border-radius:50%;
-    background:#159447;
-    margin-left:auto;
-    margin-right:12px;
-}
 </style>
 
 </head>
@@ -179,7 +214,9 @@ html,body{
 
 </div>
 
-
+<button class="back-btn" onclick="history.back()"> 
+    ←
+</button> 
 </div>
 
 <script type="module">
@@ -189,7 +226,9 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/12.2.1/firebas
 import {
     getDatabase,
     ref,
-    onValue
+    onValue,
+    update,
+    remove
 } from "https://www.gstatic.com/firebasejs/12.2.1/firebase-database.js";
 
 
@@ -210,6 +249,7 @@ const firebaseConfig = {
     appId: "1:159806985649:web:a847633be48278bcd71990",
 
     measurementId: "G-JMMWRE8XTZ"
+
 };
 
 
@@ -227,15 +267,93 @@ let requests = {};
 let selectedRequest = null;
 
 
+/* 2 HOURS */
+
+const TWO_HOURS = 2 * 60 * 60 * 1000;
+
+
 /* LOAD REQUESTS */
 
 onValue(requestsRef,function(snapshot){
 
     requests = snapshot.val() || {};
 
-    showUsers();
+    checkExpiredApprovedRequests();
+
+    if(selectedRequest && requests[selectedRequest]){
+
+        showMessage(
+            selectedRequest,
+            requests[selectedRequest]
+        );
+
+    }else{
+
+        showUsers();
+
+    }
 
 });
+
+
+/* CHECK APPROVED REQUESTS */
+
+async function checkExpiredApprovedRequests(){
+
+    const now = Date.now();
+
+    const entries = Object.entries(requests);
+
+
+    for(const [id,request] of entries){
+
+        if(
+            request.approved === true &&
+            request.approvedAt &&
+            now - request.approvedAt >= TWO_HOURS
+        ){
+
+            try{
+
+                await remove(
+                    ref(db,"chatRequests/" + id)
+                );
+
+                if(selectedRequest === id){
+
+                    selectedRequest = null;
+
+                }
+
+            }catch(error){
+
+                console.error(
+                    "Failed to auto-delete request:",
+                    error
+                );
+
+            }
+
+        }
+
+    }
+
+}
+
+
+/*
+    CHECK EVERY MINUTE
+*/
+
+setInterval(function(){
+
+    if(Object.keys(requests).length > 0){
+
+        checkExpiredApprovedRequests();
+
+    }
+
+},60000);
 
 
 /* SHOW USERNAMES */
@@ -274,7 +392,22 @@ function showUsers(){
 
         username.className = "username";
 
-        username.textContent = request.username || "Unknown User";
+        username.textContent =
+            request.username || "Unknown User";
+
+
+        const status = document.createElement("div");
+
+        status.className = "status";
+
+
+        if(request.approved === true){
+
+            status.textContent = "APPROVED";
+
+            status.classList.add("approved");
+
+        }
 
 
         const arrow = document.createElement("div");
@@ -285,6 +418,14 @@ function showUsers(){
 
 
         userItem.appendChild(username);
+
+
+        if(request.approved === true){
+
+            userItem.appendChild(status);
+
+        }
+
 
         userItem.appendChild(arrow);
 
@@ -345,7 +486,8 @@ function showMessage(id,request){
 
     username.className = "message-username";
 
-    username.textContent = request.username || "Unknown User";
+    username.textContent =
+        request.username || "Unknown User";
 
 
     const time = document.createElement("div");
@@ -355,9 +497,8 @@ function showMessage(id,request){
 
     if(request.timestamp){
 
-        time.textContent = new Date(
-            request.timestamp
-        ).toLocaleString();
+        time.textContent =
+            new Date(request.timestamp).toLocaleString();
 
     }
 
@@ -371,53 +512,143 @@ function showMessage(id,request){
 
     header.appendChild(headerText);
 
-
     message.appendChild(header);
+
+
+    /* APPROVAL STATUS */
+
+    const approvalStatus = document.createElement("div");
+
+    approvalStatus.className = "approval-status";
+
+
+    if(request.approved === true){
+
+        approvalStatus.classList.add("approved");
+
+        approvalStatus.textContent =
+            "✓ APPROVED";
+
+    }else{
+
+        approvalStatus.classList.add("pending");
+
+        approvalStatus.textContent =
+            "WAITING FOR APPROVAL";
+
+    }
+
+
+    message.appendChild(approvalStatus);
+
+
+    /* APPROVE BUTTON */
+
+    if(request.approved !== true){
+
+        const approveButton = document.createElement("button");
+
+        approveButton.className = "approve-btn";
+
+        approveButton.textContent =
+            "APPROVE REQUEST";
+
+
+        approveButton.addEventListener(
+            "click",
+            async function(){
+
+                approveButton.disabled = true;
+
+                approveButton.textContent =
+                    "APPROVING...";
+
+
+                try{
+
+                    await update(
+                        ref(db,"chatRequests/" + id),
+                        {
+                            approved:true,
+                            approvedAt:Date.now()
+                        }
+                    );
+
+                }catch(error){
+
+                    console.error(error);
+
+                    alert(
+                        "Failed to approve request."
+                    );
+
+                    approveButton.disabled = false;
+
+                    approveButton.textContent =
+                        "APPROVE REQUEST";
+
+                }
+
+            }
+        );
+
+
+        message.appendChild(approveButton);
+
+    }
 
 
     /* SONGS */
 
     if(request.songs){
 
-        Object.values(request.songs).forEach(function(song,index){
+        Object.values(request.songs).forEach(
+            function(song,index){
 
-            const songBox = document.createElement("div");
+                const songBox =
+                    document.createElement("div");
 
-            songBox.className = "song";
-
-
-            const number = document.createElement("div");
-
-            number.className = "song-number";
-
-            number.textContent = "SONG " + (index + 1);
+                songBox.className = "song";
 
 
-            const title = document.createElement("div");
+                const number =
+                    document.createElement("div");
 
-            title.className = "song-title";
+                number.className = "song-number";
 
-            title.textContent = song.songTitle;
-
-
-            const singer = document.createElement("div");
-
-            singer.className = "singer";
-
-            singer.textContent =
-                "Singer: " + song.singerName;
+                number.textContent =
+                    "SONG " + (index + 1);
 
 
-            songBox.appendChild(number);
+                const title =
+                    document.createElement("div");
 
-            songBox.appendChild(title);
+                title.className = "song-title";
 
-            songBox.appendChild(singer);
+                title.textContent =
+                    song.songTitle;
 
 
-            message.appendChild(songBox);
+                const singer =
+                    document.createElement("div");
 
-        });
+                singer.className = "singer";
+
+                singer.textContent =
+                    "Singer: " + song.singerName;
+
+
+                songBox.appendChild(number);
+
+                songBox.appendChild(title);
+
+                songBox.appendChild(singer);
+
+
+                message.appendChild(songBox);
+
+            }
+        );
 
     }
 
